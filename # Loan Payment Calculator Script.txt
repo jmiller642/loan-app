@@ -1,0 +1,21 @@
+# Loan Payment Calculator Script
+
+def calculate_payment(loan_amount, annual_rate, term_years):
+    n = term_years * 12  # total payments
+    r = annual_rate / 12  # monthly interest rate
+    payment = loan_amount * (r * (1 + r) ** n) / ((1 + r) ** n - 1)
+    return round(payment, 2)
+
+print("📝 Simple Loan Payment Calculator")
+
+# Get user input
+try:
+    amount = float(input("Enter loan amount (e.g., 320000): "))
+    rate = float(input("Enter annual interest rate (e.g., 6.5 for 6.5%): ")) / 100
+    term = int(input("Enter loan term in years (e.g., 30): "))
+
+    payment = calculate_payment(amount, rate, term)
+
+    print(f"\nEstimated monthly principal & interest payment: ${payment:,.2f}")
+except ValueError:
+    print("\n❌ Invalid input. Please enter numeric values only.")
