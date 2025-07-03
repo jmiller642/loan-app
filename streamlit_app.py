@@ -2,129 +2,127 @@ import streamlit as st
 import datetime
 import pandas as pd
 
-st.title("🏡 Comprehensive Loan Calculator with Closing Costs and Comparison Table")
+st.title("🏡 Comprehensive Loan Calculator with Full Closing Costs Table")
 
-program = st.selectbox("Select loan program", ["Conventional", "FHA", "VA", "USDA"])
-amount = st.number_input("Enter home purchase price", min_value=10000.0, value=300000.0, step=1000.0)
+# Borrower Info
+borrower_name = st.text_input("Borrower Name")
+credit_score = st.number_input("Credit Score", min_value=300, max_value=850, value=740)
 
-close_date = st.date_input("Estimated close date", datetime.date.today())
-last_day = (close_date.replace(day=28) + datetime.timedelta(days=4)).replace(day=1) - datetime.timedelta(days=1)
+# Loan Program
+program = st.selectbox("Loan Program", ["Conventional", "FHA", "VA", "USDA"])
+
+# Property Info
+purchase_price = st.number_input("Home Purchase Price ($)", min_value=10000.0, step=1000.0)
+close_date = st.date_input("Estimated Close Date", value=datetime.date.today())
+
+property_type = st.selectbox("Property Type", ["Detached", "Attached", "Manufactured", "Condo"])
+is_condo_fee = 300 if property_type == "Condo" else 0
+
+escrow_waived = st.checkbox("Escrows Waived?")
+monthly_taxes = st.number_input("Estimated Monthly Taxes ($)", min_value=0.0, step=10.0)
+monthly_insurance = st.number_input("Estimated Monthly Homeowners Insurance ($)", min_value=0.0, step=10.0)
+
+# Rates & Down Payments
+num_rates = st.number_input("How many interest rate options?", min_value=1, step=1, value=1)
+rates, credits = [], []
+for i in range(num_rates):
+    rate = st.number_input(f"Interest Rate Option {i+1} (%)", min_value=0.0, step=0.01)
+    lender_credit = st.number_input(f"Lender Credit for Rate Option {i+1} ($)", step=100.0)
+    rates.append(rate)
+    credits.append(lender_credit)
+
+num_downs = st.number_input("How many down payment options?", min_value=1, step=1, value=1)
+downs = []
+min_down = 3.5 if program == "FHA" else (0 if program in ["VA", "USDA"] else 3)
+for i in range(num_downs):
+    down = st.number_input(f"Down Payment Option {i+1} (%) (min {min_down}%)", min_value=min_down, step=0.1)
+    downs.append(down)
+
+# Closing Costs
+fixed_closing_costs = {
+    "Credit Report": 120,
+    "Underwriter Fee": 1250,
+    "Flood/Tax Cert": 76,
+    "Appraisal Fee": 625,
+    "Lenders Title Insurance": 985.20,
+    "Closing Attorney": 925,
+    "Recording Fee": 351.86,
+}
+if is_condo_fee:
+    fixed_closing_costs["Condo Questionnaire Fee"] = is_condo_fee
+
+# Prepaids
+last_day = datetime.date(close_date.year, close_date.month, 28) + datetime.timedelta(days=4)
+last_day -= datetime.timedelta(days=last_day.day)
 interim_days = (last_day - close_date).days + 1
 
-borrower_name = st.text_input("Borrower name")
-credit_score = st.number_input("Borrower credit score", min_value=300, max_value=850, value=740, step=1)
-escrow_waived = st.checkbox("Escrows waived? (Taxes/Insurance not included in monthly payment)")
-taxes = st.number_input("Estimated monthly property taxes", min_value=0.0, value=300.0, step=10.0)
-insurance = st.number_input("Estimated monthly homeowners insurance", min_value=0.0, value=100.0, step=5.0)
+results = []
 
-downs = []
-if program == "FHA":
-    num_downs = st.number_input("Number of down payment options (min 3.5%)", min_value=1, value=1, step=1)
-    for i in range(num_downs):
-        down = st.number_input(
-            f"Down payment option {i+1} (%) (min 3.5%)",
-            min_value=3.5, max_value=100.0, value=3.5, step=0.1
-        )
-        downs.append(down)
-elif program == "VA" or program == "USDA":
-    num_downs = st.number_input(f"Number of down payment options ({program} allows 0%+)", min_value=1, value=1, step=1)
-    for i in range(num_downs):
-        down = st.number_input(
-            f"Down payment option {i+1} (%)",
-            min_value=0.0, max_value=100.0, value=0.0, step=0.1
-        )
-        downs.append(down)
-else:  # Conventional
-    first_time = st.checkbox("Is borrower first-time homebuyer?")
-    min_down = 3.0 if first_time else 5.0
-    num_downs = st.number_input("Number of down payment options", min_value=1, value=1, step=1)
-    for i in range(num_downs):
-        down = st.number_input(
-            f"Down payment option {i+1} (%) (min {min_down:.1f}%)",
-            min_value=min_down, max_value=100.0, value=min_down, step=0.1
-        )
-        downs.append(down)
+for down in downs:
+    down_amt = purchase_price * (down / 100)
+    base_loan = purchase_price - down_amt
+    ltv = base_loan / purchase_price * 100
 
-num_rates = st.number_input("How many interest rate options?", min_value=1, value=1, step=1)
-rates = []
-credits = []
+    for idx, rate in enumerate(rates):
+        loan_amt = base_loan
+        monthly_mi, uf_fee = 0, 0
 
-for i in range(num_rates):
-    rate = st.number_input(f"Interest rate option {i+1} (%)", min_value=0.01, max_value=20.0, value=6.5, step=0.01)
-    rates.append(rate)
-    credit = st.number_input(f"Lender credit for rate option {i+1}", value=0.0, step=500.0)
-    credits.append(credit)
+        # PMI/MIP/Funding Fee calculations
+        if program == "FHA":
+            uf_fee = base_loan * 0.0175
+            loan_amt += uf_fee
+            annual_mip = 0.0055 if ltv >= 90 else 0.0050
+            monthly_mi = (loan_amt * annual_mip) / 12
+        elif program == "VA":
+            uf_fee = base_loan * 0.0215
+            loan_amt += uf_fee
+        elif program == "USDA":
+            uf_fee = base_loan * 0.01
+            loan_amt += uf_fee
+            monthly_mi = (loan_amt * 0.0035) / 12
+        elif program == "Conventional" and ltv > 80:
+            pmi_factor = 0.0062 * (0.85 if credit_score >= 740 else 1)
+            monthly_mi = (loan_amt * pmi_factor) / 12
 
-if program == "VA":
-    exempt_fee = st.checkbox("Is borrower exempt from VA funding fee?")
-    first_use = st.checkbox("Is this first use of VA?")
+        # Monthly Payment
+        n, r = 30 * 12, rate / 100 / 12
+        pi = loan_amt * (r * (1 + r)**n) / ((1 + r)**n - 1)
+        monthly_escrow = 0 if escrow_waived else (monthly_taxes + monthly_insurance)
+        total_payment = pi + monthly_mi + monthly_escrow
 
-if st.button("Calculate Loan Options"):
-    results = []
+        # Prepaids
+        interim_int = ((loan_amt * rate / 100) / 12 / 30) * interim_days
+        homeowners_prem = monthly_insurance * 12
+        prop_tax_res = monthly_taxes * 6
+        prepaids = interim_int + homeowners_prem + prop_tax_res
 
-    for down in downs:
-        down_amt = amount * (down / 100.0)
-        base_loan = amount - down_amt
-        ltv = base_loan / amount * 100
+        cash_close = down_amt + sum(fixed_closing_costs.values()) + prepaids - credits[idx]
 
-        for idx, rate in enumerate(rates):
-            loan_amt = base_loan
-            monthly_mi, uf_fee = 0.0, 0.0
+        results.append({
+            "Option": f"Down {down:.1f}% @ {rate:.3f}%",
+            "Down Payment": down_amt,
+            "Loan Amount": loan_amt,
+            "Monthly P&I": pi,
+            "Monthly MI/MIP/USDA": monthly_mi,
+            "Monthly Taxes": monthly_taxes if not escrow_waived else 0,
+            "Monthly Insurance": monthly_insurance if not escrow_waived else 0,
+            "Total Monthly Payment": total_payment,
+            "Lender Credit": credits[idx],
+            "Interim Interest": interim_int,
+            "Homeowners Insurance (12mo)": homeowners_prem,
+            "Property Tax Reserve (6mo)": prop_tax_res,
+            **fixed_closing_costs,
+            "Total Closing Costs": sum(fixed_closing_costs.values()),
+            "Total Prepaids": prepaids,
+            "Cash to Close": cash_close,
+        })
 
-            if program == "FHA":
-                uf_fee = base_loan * 0.0175
-                loan_amt += uf_fee
-                annual_mip = 0.0055 if ltv >= 90 else 0.0050
-                monthly_mi = (loan_amt * annual_mip) / 12
-            elif program == "VA" and not exempt_fee:
-                uf_fee = base_loan * (0.0215 if first_use and down < 5 else 0.015 if first_use else 0.033)
-                loan_amt += uf_fee
-            elif program == "USDA":
-                uf_fee = base_loan * 0.01
-                loan_amt += uf_fee
-                monthly_mi = (loan_amt * 0.0035) / 12
-            elif program == "Conventional" and ltv > 80:
-                pmi_factor = 0.0062
-                if credit_score >= 740:
-                    pmi_factor *= 0.85
-                monthly_mi = (loan_amt * pmi_factor) / 12
-
-            n, r_m = 30 * 12, rate / 100 / 12
-            pi = loan_amt * (r_m * (1 + r_m) ** n) / ((1 + r_m) ** n - 1)
-            monthly_escrow = 0 if escrow_waived else (taxes + insurance)
-            total_payment = pi + monthly_mi + monthly_escrow
-
-            interim_int = ((loan_amt * rate / 100) / 12 / 30) * interim_days
-            homeowners_prem = insurance * 12
-            prop_tax_res = taxes * 6
-            prepaids = interim_int + homeowners_prem + prop_tax_res
-
-            closing_costs = sum([120, 1250, 76, 625, 985.20, 925, 351.86])
-            cash_close = down_amt + closing_costs + prepaids - credits[idx]
-
-            results.append({
-                "Down %": down,
-                "Rate": rate,
-                "Loan Amount": loan_amt,
-                "Monthly P&I": pi,
-                "Monthly MI/MIP/USDA": monthly_mi,
-                "Taxes": taxes if not escrow_waived else 0.0,
-                "Insurance": insurance if not escrow_waived else 0.0,
-                "Total Payment": total_payment,
-                "Lender Credit": credits[idx],
-                "Cash to Close": cash_close,
-            })
-
-    df = pd.DataFrame(results)
-    st.dataframe(df.style.format({
-        "Down %": "{:.1f}%", "Rate": "{:.3f}%", "Loan Amount": "${:,.2f}",
-        "Monthly P&I": "${:,.2f}", "Monthly MI/MIP/USDA": "${:,.2f}",
-        "Taxes": "${:,.2f}", "Insurance": "${:,.2f}", "Total Payment": "${:,.2f}",
-        "Lender Credit": "${:,.2f}", "Cash to Close": "${:,.2f}",
-    }))
-
-    filename = f"{borrower_name.replace(' ', '_')}_loan_options.xlsx"
-    df.to_excel(filename, index=False)
-    st.success(f"✅ Table exported as '{filename}'")
-
-
+if st.button("Show Results"):
+    df = pd.DataFrame(results).set_index("Option").T
+    for col in df.columns:
+        for row in df.index:
+            val = df.at[row, col]
+            if isinstance(val, (float, int)):
+                if "Monthly" in row or "Loan Amount" in row or "Cash" in row or "Credit" in row or "Fee" in row or "Prepaids" in row or "Closing" in row or "Down" in row:
+                    df.at[row, col] = f"${val:,.2f}"
+    st.dataframe(df)
