@@ -88,7 +88,7 @@ for i in range(num_dp):
     down_payments.append(dp)
 
 # --- INTEREST RATE & LENDER CREDIT INPUTS ---
-st.markdown("## Interest Rate and Lender Credit Scenarios")
+st.markdown("## Interest Rate and Lender Credit/Cost Scenarios")
 rate_credit_pairs = []
 for i in range(num_rates):
     rate = st.number_input(
@@ -100,8 +100,8 @@ for i in range(num_rates):
         key=f"rate_{i}"
     )
     credit = st.number_input(
-        f"Lender Credit for Rate #{i+1} ($)",
-        min_value=0.0,
+        f"Lender Credit/Cost for Rate #{i+1} ($ — positive = credit, negative = points/cost)",
+        min_value=-50000.0,
         max_value=50000.0,
         value=0.0,
         step=500.0,
@@ -110,155 +110,153 @@ for i in range(num_rates):
     )
     rate_credit_pairs.append((rate, credit))
 
-# --- FIXED COSTS ---
-fixed_costs = {
-    "Origination Fee": 1400.0,
-    "Processing Fee": 995.0,
-    "Underwriting Fee": 795.0,
-    "Credit Report Fee": 50.0,
-    "Flood Certificate Fee": 15.0,
-    "Tax Service Fee": 75.0,
-    "Appraisal Fee": 550.0,
-}
+if st.button("Submit"):
+    # --- FIXED COSTS ---
+    fixed_costs = {
+        "Origination Fee": 1400.0,
+        "Processing Fee": 995.0,
+        "Underwriting Fee": 795.0,
+        "Credit Report Fee": 50.0,
+        "Flood Certificate Fee": 15.0,
+        "Tax Service Fee": 75.0,
+        "Appraisal Fee": 550.0,
+    }
 
-# --- PREPAIDS ---
-today = datetime.date.today()
-months_until_year_end = max(0, 12 - today.month)
-estimated_annual_taxes = 3600.0
-monthly_tax = estimated_annual_taxes / 12
-escrowed_taxes = monthly_tax * months_until_year_end
+    # --- PREPAIDS ---
+    today = datetime.date.today()
+    months_until_year_end = max(0, 12 - today.month)
+    estimated_annual_taxes = 3600.0
+    monthly_tax = estimated_annual_taxes / 12
+    escrowed_taxes = monthly_tax * months_until_year_end
 
-prepaids_escrows = {}
-if not waive_escrows:
-    prepaids_escrows["Homeowners Insurance (12 mo)"] = 1200.0
-    prepaids_escrows[f"Property Taxes (through Dec 31)"] = round(escrowed_taxes, 2)
-prepaids_escrows["Interim Interest"] = 500.0
+    prepaids_escrows = {}
+    if not waive_escrows:
+        prepaids_escrows["Homeowners Insurance (12 mo)"] = 1200.0
+        prepaids_escrows[f"Property Taxes (through Dec 31)"] = round(escrowed_taxes, 2)
+    prepaids_escrows["Interim Interest"] = 500.0
 
-monthly_homeowners = 0.0 if waive_escrows else 1200.0 / 12
-monthly_prop_taxes = 0.0 if waive_escrows else monthly_tax
+    monthly_homeowners = 0.0 if waive_escrows else 1200.0 / 12
+    monthly_prop_taxes = 0.0 if waive_escrows else monthly_tax
 
-# --- PMI & UPFRONT FEES ---
-def upfront_fee(loan_amt, program):
-    if program == "FHA":
-        return loan_amt * 0.0175
-    elif program == "VA":
-        return loan_amt * 0.023
-    elif program == "USDA":
-        return loan_amt * 0.01
-    else:
+    # --- PMI & UPFRONT FEES ---
+    def upfront_fee(loan_amt, program):
+        if program == "FHA":
+            return loan_amt * 0.0175
+        elif program == "VA":
+            return loan_amt * 0.023
+        elif program == "USDA":
+            return loan_amt * 0.01
+        else:
+            return 0.0
+
+    def monthly_pmi(loan_amt, ltv):
+        if loan_program == "Conventional" and ltv > 80:
+            return (loan_amt * 0.0055) / 12
         return 0.0
 
-def monthly_pmi(loan_amt, ltv):
-    if loan_program == "Conventional" and ltv > 80:
-        return (loan_amt * 0.0055) / 12  # e.g., 0.55% annual PMI
-    return 0.0
+    def max_seller_concession(dp, program):
+        if program == "Conventional":
+            if dp < 10: return 0.03
+            elif dp <= 25: return 0.06
+            else: return 0.09
+        elif program == "FHA": return 0.06
+        elif program == "VA": return 0.04
+        elif program == "USDA": return 0.06
+        else: return 0.0
 
-# --- SELLER CONCESSION LIMITS ---
-def max_seller_concession(dp, program):
-    if program == "Conventional":
-        if dp < 10: return 0.03
-        elif dp <= 25: return 0.06
-        else: return 0.09
-    elif program == "FHA": return 0.06
-    elif program == "VA": return 0.04
-    elif program == "USDA": return 0.06
-    else: return 0.0
+    scenario_data = {}
 
-scenario_data = {}
+    for dp in down_payments:
+        dp_amount = purchase_price * (dp / 100)
+        loan_amt_base = purchase_price - dp_amount
 
-for dp in down_payments:
-    dp_amount = purchase_price * (dp / 100)
-    loan_amt_base = purchase_price - dp_amount
-    
-    max_concession_allowed = purchase_price * max_seller_concession(dp, loan_program)
-    allowed_seller_credit = min(seller_concession, max_concession_allowed)
-    
-    upfront = upfront_fee(loan_amt_base, loan_program)
-    total_fixed = sum(fixed_costs.values()) + condo_questionnaire_fee
-    total_prepaids = sum(prepaids_escrows.values())
-    cash_to_close_base = dp_amount + total_fixed + total_prepaids + upfront - allowed_seller_credit
+        max_concession_allowed = purchase_price * max_seller_concession(dp, loan_program)
+        allowed_seller_credit = min(seller_concession, max_concession_allowed)
 
-    for rate, lender_credit in rate_credit_pairs:
-        monthly_rate = rate / 100 / 12
-        n_payments = 360
+        upfront = upfront_fee(loan_amt_base, loan_program)
+        total_fixed = sum(fixed_costs.values()) + condo_questionnaire_fee
+        total_prepaids = sum(prepaids_escrows.values())
+        cash_to_close_base = dp_amount + total_fixed + total_prepaids + upfront - allowed_seller_credit
 
-        loan_amt = loan_amt_base + (upfront if loan_program in ["FHA","VA","USDA"] else 0)
-        if monthly_rate > 0:
-            monthly_pi = loan_amt * (monthly_rate * (1 + monthly_rate) ** n_payments) / ((1 + monthly_rate) ** n_payments - 1)
-        else:
-            monthly_pi = loan_amt / n_payments
+        for rate, lender_credit in rate_credit_pairs:
+            monthly_rate = rate / 100 / 12
+            n_payments = 360
 
-        ltv = 100 - dp
-        pmi_monthly = monthly_pmi(loan_amt_base, ltv)
+            loan_amt = loan_amt_base + (upfront if loan_program in ["FHA","VA","USDA"] else 0)
+            if monthly_rate > 0:
+                monthly_pi = loan_amt * (monthly_rate * (1 + monthly_rate) ** n_payments) / ((1 + monthly_rate) ** n_payments - 1)
+            else:
+                monthly_pi = loan_amt / n_payments
 
-        total_monthly = monthly_pi + monthly_homeowners + monthly_prop_taxes + pmi_monthly
-        final_cash_to_close = cash_to_close_base - lender_credit
+            ltv = 100 - dp
+            pmi_monthly = monthly_pmi(loan_amt_base, ltv)
 
-        label = f"{dp:.0f}% @ {rate:.2f}%"
-        scenario_data[label] = {
-            "Loan Amount": round(loan_amt, 2),
-            "P&I": round(monthly_pi, 2),
-            "Taxes": round(monthly_prop_taxes, 2),
-            "Insurance": round(monthly_homeowners, 2),
-            "PMI": round(pmi_monthly, 2),
-            "Total Monthly": round(total_monthly, 2),
-            "Cash to Close": round(final_cash_to_close, 2)
-        }
+            total_monthly = monthly_pi + monthly_homeowners + monthly_prop_taxes + pmi_monthly
+            final_cash_to_close = cash_to_close_base - lender_credit
 
-df_scenarios = pd.DataFrame(scenario_data).rename_axis("Category").reset_index()
+            label = f"{dp:.0f}% @ {rate:.2f}%"
+            scenario_data[label] = {
+                "Loan Amount": round(loan_amt, 2),
+                "P&I": round(monthly_pi, 2),
+                "Taxes": round(monthly_prop_taxes, 2),
+                "Insurance": round(monthly_homeowners, 2),
+                "PMI": round(pmi_monthly, 2),
+                "Total Monthly": round(total_monthly, 2),
+                "Cash to Close": round(final_cash_to_close, 2)
+            }
 
-st.subheader("Scenario Comparison Table (Excel-Style)")
-styled_df = df_scenarios.style.format(precision=2).set_properties(**{
-    'text-align': 'center'
-}).set_table_styles([{
-    'selector': 'th',
-    'props': [('text-align', 'center'), ('font-weight', 'bold')]
-}])
+    df_scenarios = pd.DataFrame(scenario_data).rename_axis("Category").reset_index()
+    st.subheader("Scenario Comparison Table (Excel-Style)")
+    styled_df = df_scenarios.style.format(precision=2).set_properties(**{
+        'text-align': 'center'
+    }).set_table_styles([{
+        'selector': 'th',
+        'props': [('text-align', 'center'), ('font-weight', 'bold')]
+    }])
+    st.dataframe(styled_df, use_container_width=True)
 
-st.dataframe(styled_df, use_container_width=True)
+    # --- DETAILED COSTS FOR FIRST SCENARIO ---
+    dp_first = down_payments[0]
+    dp_amount_first = purchase_price * (dp_first / 100)
+    loan_amt_first = purchase_price - dp_amount_first
+    upfront_first = upfront_fee(loan_amt_first, loan_program)
+    max_concession_allowed = purchase_price * max_seller_concession(dp_first, loan_program)
+    allowed_seller_credit_first = min(seller_concession, max_concession_allowed)
+    cash_to_close_first = dp_amount_first + sum(fixed_costs.values()) + condo_questionnaire_fee + sum(prepaids_escrows.values()) + upfront_first - allowed_seller_credit_first - rate_credit_pairs[0][1]
 
-# --- DETAILED COSTS FOR FIRST SCENARIO ---
-dp_first = down_payments[0]
-dp_amount_first = purchase_price * (dp_first / 100)
-loan_amt_first = purchase_price - dp_amount_first
-upfront_first = upfront_fee(loan_amt_first, loan_program)
-max_concession_allowed = purchase_price * max_seller_concession(dp_first, loan_program)
-allowed_seller_credit_first = min(seller_concession, max_concession_allowed)
-cash_to_close_first = dp_amount_first + sum(fixed_costs.values()) + condo_questionnaire_fee + sum(prepaids_escrows.values()) + upfront_first - allowed_seller_credit_first - rate_credit_pairs[0][1]
+    costs_table = {
+        "Description": [],
+        "Amount ($)": []
+    }
 
-costs_table = {
-    "Description": [],
-    "Amount ($)": []
-}
+    costs_table["Description"].append("Down Payment")
+    costs_table["Amount ($)"].append(round(dp_amount_first, 2))
+    for desc, amount in fixed_costs.items():
+        costs_table["Description"].append(desc)
+        costs_table["Amount ($)"].append(amount)
+    if condo_questionnaire_fee:
+        costs_table["Description"].append("Condo Questionnaire Fee")
+        costs_table["Amount ($)"].append(condo_questionnaire_fee)
+    for desc, amount in prepaids_escrows.items():
+        costs_table["Description"].append(desc)
+        costs_table["Amount ($)"].append(amount)
+    if upfront_first > 0:
+        insurance_label = {
+            "FHA": "FHA UFMIP",
+            "VA": "VA Funding Fee",
+            "USDA": "USDA Guarantee Fee"
+        }.get(loan_program, "Upfront Insurance")
+        costs_table["Description"].append(insurance_label)
+        costs_table["Amount ($)"].append(round(upfront_first, 2))
+    if allowed_seller_credit_first > 0:
+        costs_table["Description"].append("Seller Concession")
+        costs_table["Amount ($)"].append(-round(allowed_seller_credit_first, 2))
+    if rate_credit_pairs[0][1] != 0:
+        costs_table["Description"].append("Lender Credit/Cost")
+        costs_table["Amount ($)"].append(-round(rate_credit_pairs[0][1], 2))
+    costs_table["Description"].append("TOTAL CASH TO CLOSE")
+    costs_table["Amount ($)"].append(round(cash_to_close_first, 2))
 
-costs_table["Description"].append("Down Payment")
-costs_table["Amount ($)"].append(round(dp_amount_first, 2))
-for desc, amount in fixed_costs.items():
-    costs_table["Description"].append(desc)
-    costs_table["Amount ($)"].append(amount)
-if condo_questionnaire_fee:
-    costs_table["Description"].append("Condo Questionnaire Fee")
-    costs_table["Amount ($)"].append(condo_questionnaire_fee)
-for desc, amount in prepaids_escrows.items():
-    costs_table["Description"].append(desc)
-    costs_table["Amount ($)"].append(amount)
-if upfront_first > 0:
-    insurance_label = {
-        "FHA": "FHA UFMIP",
-        "VA": "VA Funding Fee",
-        "USDA": "USDA Guarantee Fee"
-    }.get(loan_program, "Upfront Insurance")
-    costs_table["Description"].append(insurance_label)
-    costs_table["Amount ($)"].append(round(upfront_first, 2))
-if allowed_seller_credit_first > 0:
-    costs_table["Description"].append("Seller Concession")
-    costs_table["Amount ($)"].append(-round(allowed_seller_credit_first, 2))
-if rate_credit_pairs[0][1] > 0:
-    costs_table["Description"].append("Lender Credit")
-    costs_table["Amount ($)"].append(-round(rate_credit_pairs[0][1], 2))
-costs_table["Description"].append("TOTAL CASH TO CLOSE")
-costs_table["Amount ($)"].append(round(cash_to_close_first, 2))
-
-df_costs = pd.DataFrame(costs_table)
-st.subheader("Detailed Costs Breakdown (First Scenario)")
-st.table(df_costs)
+    df_costs = pd.DataFrame(costs_table)
+    st.subheader("Detailed Costs Breakdown (First Scenario)")
+    st.table(df_costs)
